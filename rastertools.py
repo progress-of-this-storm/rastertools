@@ -2,7 +2,7 @@
 # Louie E. Bell, University of Cambridge
 
 # imports
-from osgeo import gdal
+from osgeo import gdal, ogr
 import numpy as np
 
 def read_reference_tiff(refPath):
@@ -68,3 +68,49 @@ def write_geotiff(fileName, arr, reference):
     band.WriteArray(arr) # fill with values
     band.FlushCache()
     band.ComputeStatistics(False)
+
+def mask_raster_with_shapefile(raster_path, shapefile_path, output_path, nodata_value=np.nan):
+    """
+    Masks a raster using a shapefile by setting pixels inside the shapefile to a nodata value.
+    """
+    # Open raster
+    raster_ds = gdal.Open(raster_path, gdal.GA_Update)
+    band = raster_ds.GetRasterBand(1)
+    raster_array = band.ReadAsArray()
+    
+    # Create an empty mask with the same size as the raster
+    mask_ds = gdal.GetDriverByName('MEM').Create('', raster_ds.RasterXSize, raster_ds.RasterYSize, 1, gdal.GDT_Byte)
+    mask_ds.SetGeoTransform(raster_ds.GetGeoTransform())
+    mask_ds.SetProjection(raster_ds.GetProjection())
+
+    # Open shapefile
+    shp_ds = ogr.Open(shapefile_path)
+    shp_layer = shp_ds.GetLayer()
+
+    # Rasterize shapefile into the mask dataset
+    gdal.RasterizeLayer(mask_ds, [1], shp_layer, burn_values=[1])
+
+    # Read the mask as an array
+    mask_array = mask_ds.GetRasterBand(1).ReadAsArray()
+
+    # Apply the mask: Set pixels inside the shapefile to the nodata value
+    raster_array = raster_array.astype(np.float32) 
+    raster_array[mask_array == 1] = nodata_value
+
+    # Save the masked raster
+    driver = gdal.GetDriverByName("GTiff")
+    out_ds = driver.Create(output_path, raster_ds.RasterXSize, raster_ds.RasterYSize, 1, gdal.GDT_Float32)
+    out_ds.SetGeoTransform(raster_ds.GetGeoTransform())
+    out_ds.SetProjection(raster_ds.GetProjection())
+
+    out_band = out_ds.GetRasterBand(1)
+    out_band.WriteArray(raster_array)
+    out_band.SetNoDataValue(nodata_value)
+    out_band.FlushCache()
+
+    # Cleanup
+    raster_ds = None
+    mask_ds = None
+    shp_ds = None
+    out_ds = None
+    print(f"Masked raster saved to {output_path}")

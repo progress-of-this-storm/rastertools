@@ -25,13 +25,29 @@ def read_reference_tiff(refPath):
 def read_geotiff(fileName):
     """Reads .tif filepath to an array and a gdal dataset object """
     ds = gdal.Open(fileName)
-    band = ds.GetRasterBand(1)
-    arr = band.ReadAsArray()
-    return arr, ds
+    count = ds.RasterCount
+    if count > 1:
+        stack = np.empty((ds.RasterYSize, ds.RasterXSize, count), dtype = np.uint32)
+        for band in range(count):
+            rband = ds.GetRasterBand(band+1)
+            arr = rband.ReadAsArray()
+            stack[:, :, band] = arr
+        return stack, ds
+    else:
+        band = ds.GetRasterBand(1)
+        arr = band.ReadAsArray()
+        return arr, ds
 
-def write_geotiff(fileName, arr, reference):
+def write_geotiff(arr, folder, reference, name):
     """
-    Takes an reference .tif and writes a new.tif file from an array 
+    Takes an reference .tif and writes a new.tif file from an array
+    Inputs:
+        - `arr`, array-type
+        - `filePath`, filePath to write to including filename ending in .tif
+        - `reference`, rastertools reference object from `read_reference_tiff`
+
+    Outputs:
+        - single/multiple .tif files dependent on axis 2 length of array
     """
     if arr.dtype == np.float32: # parse array data type
         arr_type = gdal.GDT_Float32
@@ -59,15 +75,26 @@ def write_geotiff(fileName, arr, reference):
         trans[4],
         y_res
     )
-    
+
     driver = gdal.GetDriverByName("GTiff") # set file driver
-    out_ds = driver.Create(fileName, arr.shape[1], arr.shape[0], 1, arr_type) # create the file
-    out_ds.SetProjection(proj) # use ref dataset to set proj and transform
-    out_ds.SetGeoTransform(new_transform)
-    band = out_ds.GetRasterBand(1) # write a single band raster
-    band.WriteArray(arr) # fill with values
-    band.FlushCache()
-    band.ComputeStatistics(False)
+
+    if len(arr.shape) > 2: # if a n-dim array
+        for rband in range(arr.shape[2]): # loop over bands and write each to .tif 
+            out_ds = driver.Create(f'{folder}/{name}_{rband}.tif', arr.shape[1], arr.shape[0], 1, arr_type) # create the file
+            out_ds.SetProjection(proj) # use ref dataset to set proj and transform
+            out_ds.SetGeoTransform(new_transform)
+            band = out_ds.GetRasterBand(1) # write a single band raster
+            band.WriteArray(arr[:, :, rband]) # fill with values
+            band.FlushCache()
+            band.ComputeStatistics(False)
+    else:
+        out_ds = driver.Create(f'{folder}/{name}.tif', arr.shape[1], arr.shape[0], 1, arr_type) # create the file
+        out_ds.SetProjection(proj) # use ref dataset to set proj and transform
+        out_ds.SetGeoTransform(new_transform)
+        band = out_ds.GetRasterBand(1) # write a single band raster
+        band.WriteArray(arr) # fill with values
+        band.FlushCache()
+        band.ComputeStatistics(False)  
 
 def mask_raster_with_shapefile(raster_path, shapefile_path, output_path, nodata_value=np.nan):
     """
